@@ -1,293 +1,258 @@
-"""
-Copyright © Krypton 2019-Present - https://github.com/kkrypt0nn (https://krypton.ninja)
-Description:
-🐍 A simple template to start to code your own and personalized Discord bot in Python
-
-Version: 6.2.0
-"""
-
-import json
-import logging
-import os
-import platform
-import random
-import sys
-
-import aiosqlite
 import discord
-from discord.ext import commands, tasks
-from discord.ext.commands import Context
-from dotenv import load_dotenv
-
-from database import DatabaseManager
-
-if not os.path.isfile(f"{os.path.realpath(os.path.dirname(__file__))}/config.json"):
-    sys.exit("'config.json' not found! Please add it and try again.")
-else:
-    with open(f"{os.path.realpath(os.path.dirname(__file__))}/config.json") as file:
-        config = json.load(file)
-
-"""	
-Setup bot intents (events restrictions)
-For more information about intents, please go to the following websites:
-https://discordpy.readthedocs.io/en/latest/intents.html
-https://discordpy.readthedocs.io/en/latest/intents.html#privileged-intents
+from discord.ext import commands
+from discord.ui import Button, View
+from datetime import datetime
+import asyncio
 
 
-Default Intents:
-intents.bans = True
-intents.dm_messages = True
-intents.dm_reactions = True
-intents.dm_typing = True
-intents.emojis = True
-intents.emojis_and_stickers = True
-intents.guild_messages = True
-intents.guild_reactions = True
-intents.guild_scheduled_events = True
-intents.guild_typing = True
-intents.guilds = True
-intents.integrations = True
-intents.invites = True
-intents.messages = True # `message_content` is required to get the content of the messages
-intents.reactions = True
-intents.typing = True
-intents.voice_states = True
-intents.webhooks = True
-
-Privileged Intents (Needs to be enabled on developer portal of Discord), please use them only if you need them:
-intents.members = True
-intents.message_content = True
-intents.presences = True
-"""
-
+# Definisci i tuoi ID e il token
+SERVER_ID = 1263427498914349087  # Sostituisci con l'ID del tuo server
+MODMAIL_CATEGORY_ID = 1268149112948265021  # Sostituisci con l'ID della tua categoria ModMail
+MODERATOR_ROLE_NAME = "Moderation Team"  # Nome del ruolo dei moderatori
+TOKEN = os.getenv('DISCORD_TOKEN')  # Carica il token dal file .env
+# Configura gli intents
 intents = discord.Intents.default()
+intents.messages = True
+intents.guilds = True
+intents.dm_messages = True
+intents.message_content = True
 
-"""
-Uncomment this if you want to use prefix (normal) commands.
-It is recommended to use slash commands and therefore not use prefix commands.
+# Crea l'istanza del bot
+bot = commands.Bot(command_prefix=":", intents=intents)
 
-If you want to use prefix commands, make sure to also enable the intent below in the Discord developer portal.
-"""
-# intents.message_content = True
+# Dizionario per memorizzare la lingua degli utenti
+user_languages = {}
 
-# Setup both of the loggers
+# Classe per i pulsanti di conferma
+class ConfirmationView(View):
+    def __init__(self, message):
+        super().__init__()
+        self.message = message
+        self.language = user_languages.get(self.message.author.id, "English")
+    
+    @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success, custom_id="confirm_ticket")
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()  # Risposta deferita per evitare timeout
 
-
-class LoggingFormatter(logging.Formatter):
-    # Colors
-    black = "\x1b[30m"
-    red = "\x1b[31m"
-    green = "\x1b[32m"
-    yellow = "\x1b[33m"
-    blue = "\x1b[34m"
-    gray = "\x1b[38m"
-    # Styles
-    reset = "\x1b[0m"
-    bold = "\x1b[1m"
-
-    COLORS = {
-        logging.DEBUG: gray + bold,
-        logging.INFO: blue + bold,
-        logging.WARNING: yellow + bold,
-        logging.ERROR: red,
-        logging.CRITICAL: red + bold,
-    }
-
-    def format(self, record):
-        log_color = self.COLORS[record.levelno]
-        format = "(black){asctime}(reset) (levelcolor){levelname:<8}(reset) (green){name}(reset) {message}"
-        format = format.replace("(black)", self.black + self.bold)
-        format = format.replace("(reset)", self.reset)
-        format = format.replace("(levelcolor)", log_color)
-        format = format.replace("(green)", self.green + self.bold)
-        formatter = logging.Formatter(format, "%Y-%m-%d %H:%M:%S", style="{")
-        return formatter.format(record)
-
-
-logger = logging.getLogger("discord_bot")
-logger.setLevel(logging.INFO)
-
-# Console handler
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(LoggingFormatter())
-# File handler
-file_handler = logging.FileHandler(filename="discord.log", encoding="utf-8", mode="w")
-file_handler_formatter = logging.Formatter(
-    "[{asctime}] [{levelname:<8}] {name}: {message}", "%Y-%m-%d %H:%M:%S", style="{"
-)
-file_handler.setFormatter(file_handler_formatter)
-
-# Add the handlers
-logger.addHandler(console_handler)
-logger.addHandler(file_handler)
-
-
-class DiscordBot(commands.Bot):
-    def __init__(self) -> None:
-        super().__init__(
-            command_prefix=commands.when_mentioned_or(config["prefix"]),
-            intents=intents,
-            help_command=None,
+        guild = bot.get_guild(SERVER_ID)
+        category = discord.utils.get(guild.categories, id=MODMAIL_CATEGORY_ID)
+        
+        # Crea un nuovo canale ModMail
+        channel = await guild.create_text_channel(name=f'modmail-{self.message.author.id}', category=category)
+        await channel.set_permissions(guild.default_role, read_messages=False)
+        moderator_role = discord.utils.get(guild.roles, name=MODERATOR_ROLE_NAME)
+        await channel.set_permissions(moderator_role, read_messages=True, send_messages=True)
+        
+        # Avviso iniziale con pulsanti
+        embed = discord.Embed(
+            title="New Ticket",
+            description=f"Type a message in this channel to reply.\nUser: {self.message.author.mention}\nLanguage: {self.language}",
+            color=0x00FF00  # Verde
         )
-        """
-        This creates custom bot variables so that we can access these variables in cogs more easily.
+        view = ModMailView()
+        await channel.send(embed=embed, view=view)
+        print(f"Created new ModMail channel: {channel.name}")
+        
+        # Inoltra il messaggio dell'utente
+        embed = discord.Embed(
+            title="Message Received",
+            description=self.message.content,
+            color=0x00FF00  # Verde
+        )
+        avatar_url = self.message.author.avatar.url if self.message.author.avatar else None
+        embed.set_author(name=f"{self.message.author} | {self.message.author.id}", icon_url=avatar_url)
+        embed.set_footer(text=f"User Name: {self.message.author} • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        await channel.send(embed=embed)
+        await self.message.add_reaction("✅")  # Aggiungi reazione ✅
+        print(f"Message sent to channel {channel.name}")
 
-        For example, The config is available using the following code:
-        - self.config # In this class
-        - bot.config # In this file
-        - self.bot.config # In cogs
-        """
-        self.logger = logger
-        self.config = config
-        self.database = None
+        # Risposta automatica all'utente solo al primo messaggio
+        try:
+            await self.message.author.send(embed=discord.Embed(
+                title="Message Sent",
+                description=self.message.content,
+                color=0xFF4500  # Arancione
+            ).set_footer(text=f"Sent on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"))
+            print(f"Sent notification to user {self.message.author.id}")
+        except discord.Forbidden:
+            print(f"Failed to send DM to user {self.message.author.id}: DM permissions are not allowed.")
+        except discord.HTTPException as e:
+            print(f"Failed to send DM to user {self.message.author.id}: HTTP Exception - {e}")
+        except Exception as e:
+            print(f"Failed to send DM to user {self.message.author.id}: {e}")
 
-    async def init_db(self) -> None:
-        async with aiosqlite.connect(
-            f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
-        ) as db:
-            with open(
-                f"{os.path.realpath(os.path.dirname(__file__))}/database/schema.sql"
-            ) as file:
-                await db.executescript(file.read())
-            await db.commit()
+    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger, custom_id="cancel_ticket")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Creazione del ticket annullata.", ephemeral=True)
 
-    async def load_cogs(self) -> None:
-        """
-        The code in this function is executed whenever the bot will start.
-        """
-        for file in os.listdir(f"{os.path.realpath(os.path.dirname(__file__))}/cogs"):
-            if file.endswith(".py"):
-                extension = file[:-3]
+# Classe per i pulsanti di ModMail
+class ModMailView(View):
+    def __init__(self):
+        super().__init__()
+        self.claimed = False  # Track if the ticket is claimed
+        self.afk = False  # Track if the ticket is AFK
+
+    @discord.ui.button(label="CLOSE", style=discord.ButtonStyle.danger, custom_id="close_ticket")
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        channel = interaction.channel
+        if interaction.user.guild_permissions.manage_channels:
+            # Informa l'utente del ticket
+            user_id = int(channel.name.split('-')[1])
+            user = await bot.fetch_user(user_id)
+            if user:
                 try:
-                    await self.load_extension(f"cogs.{extension}")
-                    self.logger.info(f"Loaded extension '{extension}'")
-                except Exception as e:
-                    exception = f"{type(e).__name__}: {e}"
-                    self.logger.error(
-                        f"Failed to load extension {extension}\n{exception}"
+                    # Messaggio di embed per chiudere il ticket
+                    close_embed = discord.Embed(
+                        title="Ticket Chiuso",
+                        description="Il tuo ticket è stato chiuso. Grazie per averci contattato!",
+                        color=0xFF0000  # Rosso
                     )
+                    close_embed.set_footer(text="Grazie per aver utilizzato il nostro supporto.")
+                    await user.send(embed=close_embed)
+                except discord.Forbidden:
+                    print(f"Failed to send DM to user {user_id}: DM permissions are not allowed.")
+                except discord.HTTPException as e:
+                    print(f"Failed to send DM to user {user_id}: HTTP Exception - {e}")
 
-    @tasks.loop(minutes=1.0)
-    async def status_task(self) -> None:
-        """
-        Setup the game status task of the bot.
-        """
-        statuses = ["with you!", "with Krypton!", "with humans!"]
-        await self.change_presence(activity=discord.Game(random.choice(statuses)))
-
-    @status_task.before_loop
-    async def before_status_task(self) -> None:
-        """
-        Before starting the status changing task, we make sure the bot is ready
-        """
-        await self.wait_until_ready()
-
-    async def setup_hook(self) -> None:
-        """
-        This will just be executed when the bot starts the first time.
-        """
-        self.logger.info(f"Logged in as {self.user.name}")
-        self.logger.info(f"discord.py API version: {discord.__version__}")
-        self.logger.info(f"Python version: {platform.python_version()}")
-        self.logger.info(
-            f"Running on: {platform.system()} {platform.release()} ({os.name})"
-        )
-        self.logger.info("-------------------")
-        await self.init_db()
-        await self.load_cogs()
-        self.status_task.start()
-        self.database = DatabaseManager(
-            connection=await aiosqlite.connect(
-                f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
+            # Crea un embed per il messaggio di chiusura nel canale
+            embed = discord.Embed(
+                title="Ticket Chiuso",
+                description=f"Il tuo ticket è stato chiuso da {interaction.user.mention}.",
+                color=0xFF0000  # Rosso
             )
-        )
+            embed.set_footer(text="Grazie per aver utilizzato il nostro supporto.")
+            
+            # Invia il messaggio di chiusura e cancella il canale dopo 1 minuto
+            await channel.send(embed=embed)
+            await asyncio.sleep(60)
+            await channel.delete()
+            await interaction.response.send_message("Ticket chiuso.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Non hai i permessi necessari per chiudere questo ticket.", ephemeral=True)
 
-    async def on_message(self, message: discord.Message) -> None:
-        """
-        The code in this event is executed every time someone sends a message, with or without the prefix
-
-        :param message: The message that was sent.
-        """
-        if message.author == self.user or message.author.bot:
+    @discord.ui.button(label="CLAIM", style=discord.ButtonStyle.primary, custom_id="claim_ticket")
+    async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.claimed:
+            await interaction.response.send_message("Questo ticket è già stato reclamato.", ephemeral=True)
             return
-        await self.process_commands(message)
 
-    async def on_command_completion(self, context: Context) -> None:
-        """
-        The code in this event is executed every time a normal command has been *successfully* executed.
+        channel = interaction.channel
+        # Menziona il moderatore che ha reclamato il ticket
+        embed = discord.Embed(
+            title="Ticket Reclamato",
+            description=f"Il ticket è stato reclamato da {interaction.user.mention}.",
+            color=0x00FF00  # Verde
+        )
+        embed.set_footer(text=f"Reclaimed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-        :param context: The context of the command that has been executed.
-        """
-        full_command_name = context.command.qualified_name
-        split = full_command_name.split(" ")
-        executed_command = str(split[0])
-        if context.guild is not None:
-            self.logger.info(
-                f"Executed {executed_command} command in {context.guild.name} (ID: {context.guild.id}) by {context.author} (ID: {context.author.id})"
-            )
-        else:
-            self.logger.info(
-                f"Executed {executed_command} command by {context.author} (ID: {context.author.id}) in DMs"
-            )
+        # Informa l'utente del ticket
+        user_id = int(channel.name.split('-')[1])
+        user = await bot.fetch_user(user_id)
+        if user:
+            try:
+                await user.send(embed=embed)
+            except discord.Forbidden:
+                print(f"Failed to send DM to user {user_id}: DM permissions are not allowed.")
+            except discord.HTTPException as e:
+                print(f"Failed to send DM to user {user_id}: HTTP Exception - {e}")
 
-    async def on_command_error(self, context: Context, error) -> None:
-        """
-        The code in this event is executed every time a normal valid command catches an error.
+        await channel.send(embed=embed)
+        await interaction.response.send_message("Ticket reclamato.", ephemeral=True)
 
-        :param context: The context of the normal command that failed executing.
-        :param error: The error that has been faced.
-        """
-        if isinstance(error, commands.CommandOnCooldown):
-            minutes, seconds = divmod(error.retry_after, 60)
-            hours, minutes = divmod(minutes, 60)
-            hours = hours % 24
-            embed = discord.Embed(
-                description=f"**Please slow down** - You can use this command again in {f'{round(hours)} hours' if round(hours) > 0 else ''} {f'{round(minutes)} minutes' if round(minutes) > 0 else ''} {f'{round(seconds)} seconds' if round(seconds) > 0 else ''}.",
-                color=0xE02B2B,
-            )
-            await context.send(embed=embed)
-        elif isinstance(error, commands.NotOwner):
-            embed = discord.Embed(
-                description="You are not the owner of the bot!", color=0xE02B2B
-            )
-            await context.send(embed=embed)
-            if context.guild:
-                self.logger.warning(
-                    f"{context.author} (ID: {context.author.id}) tried to execute an owner only command in the guild {context.guild.name} (ID: {context.guild.id}), but the user is not an owner of the bot."
-                )
-            else:
-                self.logger.warning(
-                    f"{context.author} (ID: {context.author.id}) tried to execute an owner only command in the bot's DMs, but the user is not an owner of the bot."
-                )
-        elif isinstance(error, commands.MissingPermissions):
-            embed = discord.Embed(
-                description="You are missing the permission(s) `"
-                + ", ".join(error.missing_permissions)
-                + "` to execute this command!",
-                color=0xE02B2B,
-            )
-            await context.send(embed=embed)
-        elif isinstance(error, commands.BotMissingPermissions):
-            embed = discord.Embed(
-                description="I am missing the permission(s) `"
-                + ", ".join(error.missing_permissions)
-                + "` to fully perform this command!",
-                color=0xE02B2B,
-            )
-            await context.send(embed=embed)
-        elif isinstance(error, commands.MissingRequiredArgument):
-            embed = discord.Embed(
-                title="Error!",
-                # We need to capitalize because the command arguments have no capital letter in the code and they are the first word in the error message.
-                description=str(error).capitalize(),
-                color=0xE02B2B,
-            )
-            await context.send(embed=embed)
-        else:
-            raise error
+        # Disabilita il bottone CLAIM
+        self.claimed = True
+        button.disabled = True
+        await interaction.message.edit(view=self)
 
+    @discord.ui.button(label="AFK", style=discord.ButtonStyle.secondary, custom_id="afk_ticket")
+    async def afk_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.afk:
+            await interaction.response.send_message("Il ticket è già in modalità AFK.", ephemeral=True)
+            return
+        
+        self.afk = True
+        button.disabled = True
+        unafk_button = self.children[3]  # Ottiene il pulsante UNAFK
+        unafk_button.disabled = False
+        await interaction.message.edit(view=self)
+        
+        # Blocca l'invio di messaggi nel canale
+        await interaction.channel.set_permissions(interaction.user, send_messages=False)
+        
+        # Informa l'utente del ticket
+        embed = discord.Embed(
+            title="Ticket in Attesa",
+            description="Il tuo ticket è stato messo in attesa. Un moderatore arriverà al più presto.",
+            color=0xFFFF00  # Giallo
+        )
+        embed.set_footer(text="Attendere che un moderatore ritorni per rispondere.")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Ticket messo in attesa.", ephemeral=True)
 
-load_dotenv()
+    @discord.ui.button(label="UNAFK", style=discord.ButtonStyle.success, custom_id="unafk_ticket")
+    async def unafk_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.afk:
+            await interaction.response.send_message("Il ticket non è in modalità AFK.", ephemeral=True)
+            return
+        
+        self.afk = False
+        button.disabled = True
+        afk_button = self.children[2]  # Ottiene il pulsante AFK
+        afk_button.disabled = False
+        await interaction.message.edit(view=self)
+        
+        # Rende di nuovo possibile inviare messaggi nel canale
+        await interaction.channel.set_permissions(interaction.user, send_messages=True)
+        
+        # Informa l'utente del ticket
+        embed = discord.Embed(
+            title="Ticket Attivo",
+            description="Il tuo ticket è stato rimesso in attività. Un moderatore sarà presto disponibile.",
+            color=0xFFFF00  # Giallo
+        )
+        embed.set_footer(text="Grazie per la pazienza.")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Ticket rimesso in attività.", ephemeral=True)
 
-bot = DiscordBot()
-bot.run(os.getenv("TOKEN"))
+# Comando per cambiare lingua
+@bot.command(name='changelanguage')
+async def changelanguage(ctx):
+    if isinstance(ctx.channel, discord.DMChannel):
+        buttons = [
+            Button(label="English", custom_id="language_english", style=discord.ButtonStyle.primary),
+            Button(label="Español", custom_id="language_spanish", style=discord.ButtonStyle.secondary),
+            Button(label="Italiano", custom_id="language_italian", style=discord.ButtonStyle.secondary)
+        ]
+        view = View()
+        for button in buttons:
+            view.add_item(button)
+        await ctx.send("Please select your preferred language:", view=view)
+    else:
+        await ctx.send("This command can only be used in DMs.")
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.component:
+        if interaction.custom_id.startswith("language_"):
+            language = interaction.custom_id.split("_")[1]
+            user_languages[interaction.user.id] = language
+            await interaction.response.send_message(f"Language set to {language.capitalize()}.", ephemeral=True)
+        elif interaction.custom_id == "confirm_ticket":
+            view = ConfirmationView(interaction.message)
+            await view.confirm_button(interaction, interaction.message)
+        elif interaction.custom_id == "cancel_ticket":
+            view = ConfirmationView(interaction.message)
+            await view.cancel_button(interaction, interaction.message)
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    if isinstance(message.channel, discord.DMChannel):
+        if message.content.lower() == "ticket":
+            view = ConfirmationView(message)
+            await message.channel.send("Are you sure you want to create a ticket?", view=view)
+        return
+
+bot.run(TOKEN)
